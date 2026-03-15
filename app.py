@@ -3,57 +3,51 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-# --- ページ設定 (レスポンシブ対応) ---
-st.set_page_config(page_title="安全衛生NEWS", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="安全衛生NEWS", layout="wide")
 
-# --- カスタムCSS（スマホでの視認性向上） ---
-st.markdown("""
-    <style>
-    .reportview-container { background: #f0f2f6; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; }
-    .news-card {
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e6e9ef;
-        background-color: white;
-        margin-bottom: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# ヘッダー（ブラウザからのアクセスに見せかける設定）
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+}
 
-# --- スクレイピング関数 ---
-@st.cache_data(ttl=3600) # 1時間はキャッシュを保持（相手サーバーへの負荷軽減）
+@st.cache_data(ttl=3600)
 def fetch_all_news():
     news_list = []
     
     # 1. 職場のあんぜんサイト（新着情報）
     try:
         url_mhlw = "https://anzeninfo.mhlw.go.jp/index.html"
-        res = requests.get(url_mhlw, timeout=10)
+        res = requests.get(url_mhlw, headers=HEADERS, timeout=10)
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
-        news_section = soup.find('dl', class_='news_list')
-        if news_section:
-            dts = news_section.find_all('dt')
-            dds = news_section.find_all('dd')
-            for dt, dd in zip(dts[:10], dds[:10]): # 最新10件
-                news_list.append({
-                    "日付": dt.get_text(strip=True),
-                    "カテゴリ": "行政・事例",
-                    "タイトル": dd.get_text(strip=True),
-                    "URL": "https://anzeninfo.mhlw.go.jp" + dd.find('a')['href'] if dd.find('a') else url_mhlw,
-                    "ソース": "職場のあんぜんサイト"
-                })
-    except: pass
+        
+        # サイト構造に合わせて再調整
+        news_list_tags = soup.find_all(['dt', 'dd'])
+        temp_date = ""
+        for tag in news_list_tags:
+            if tag.name == 'dt':
+                temp_date = tag.get_text(strip=True)
+            elif tag.name == 'dd' and temp_date:
+                a_tag = tag.find('a')
+                if a_tag:
+                    news_list.append({
+                        "日付": temp_date,
+                        "カテゴリ": "行政・事例",
+                        "タイトル": a_tag.get_text(strip=True),
+                        "URL": "https://anzeninfo.mhlw.go.jp" + a_tag['href'] if a_tag['href'].startswith('/') else a_tag['href'],
+                        "ソース": "職場のあんぜんサイト"
+                    })
+    except Exception as e:
+        st.error(f"厚労省サイトの取得失敗: {e}")
 
-    # 2. 安全衛生情報センター（写真で見る労災ニュース）
+    # 2. 安全衛生情報センター（事故速報）
     try:
         url_jish = "https://www.jaish.gr.jp/anzen/new/shasin_list.html"
-        res = requests.get(url_jish, timeout=10)
+        res = requests.get(url_jish, headers=HEADERS, timeout=10)
         res.encoding = 'shift_jis'
         soup = BeautifulSoup(res.text, 'html.parser')
         rows = soup.find_all('tr')
-        for row in rows[1:11]: # ヘッダーを除いた最新10件
+        for row in rows[1:15]:
             cols = row.find_all('td')
             if len(cols) >= 2:
                 a_tag = cols[1].find('a')
@@ -62,46 +56,29 @@ def fetch_all_news():
                         "日付": "最新",
                         "カテゴリ": "事故速報",
                         "タイトル": a_tag.get_text(strip=True),
-                        "URL": "https://www.jaish.gr.jp" + a_tag['href'],
+                        "URL": "https://www.jaish.gr.jp" + a_tag['href'].replace('../', '/anzen/'),
                         "ソース": "安全衛生情報センター"
                     })
-    except: pass
+    except Exception as e:
+        st.error(f"安全衛生情報センターの取得失敗: {e}")
     
     return pd.DataFrame(news_list)
 
-# --- 画面構成 ---
 st.title("🛡️ 安全衛生ニュース収集アプリ")
-st.caption("PC・スマホ対応：現場の安全管理・教育のネタ探しに")
 
 with st.spinner('最新情報を取得中...'):
     df = fetch_all_news()
 
-# --- フィルタリング（スマホでは上部に、PCでは横に） ---
-st.sidebar.header("表示フィルタ")
-selected_source = st.sidebar.multiselect(
-    "情報源を選択", 
-    options=df["ソース"].unique() if not df.empty else [],
-    default=df["ソース"].unique() if not df.empty else []
-)
-
 if not df.empty:
-    display_df = df[df["ソース"].isin(selected_source)]
+    # 重複削除
+    df = df.drop_duplicates(subset=['タイトル'])
     
-    # --- ニュース表示エリア ---
-    # PCでは2列、スマホ（画面幅が狭い時）は自動で1列になる
-    cols = st.columns(2) 
-    
-    for i, row in display_df.iterrows():
+    # カテゴリ選択
+    sources = st.multiselect("情報源フィルタ", options=df["ソース"].unique(), default=df["ソース"].unique())
+    display_df = df[df["ソース"].isin(sources)]
+
+    cols = st.columns(2)
+    for i, (_, row) in enumerate(display_df.iterrows()):
         with cols[i % 2]:
             with st.container(border=True):
-                st.write(f"🏷️ {row['カテゴリ']} | {row['日付']}")
-                st.markdown(f"#### {row['タイトル']}")
-                st.write(f"📍 出典: {row['ソース']}")
-                
-                # ボタンクリックでリンクへ
-                st.link_button("元記事を確認する", row['URL'])
-else:
-    st.warning("ニュースの取得に失敗したか、データがありません。")
-
-st.divider()
-st.caption("※このアプリは学習・業務支援用のプロトタイプです。相手サイトの負荷に配慮し、短時間での連続更新は避けてください。")
+                st.caption(f"{row
