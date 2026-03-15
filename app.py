@@ -6,30 +6,16 @@ import requests
 # ページ設定
 st.set_page_config(page_title="Safety News Tracker", layout="wide", initial_sidebar_state="collapsed")
 
-# カスタムCSSでデザインをモダンに
+# カスタムCSS
 st.markdown("""
     <style>
-    .main {
-        background-color: #f8f9fa;
-    }
+    .main { background-color: #f8f9fa; }
     .stButton>button {
         width: 100%;
         border-radius: 20px;
         border: 1px solid #e0e0e0;
         background-color: white;
         transition: all 0.3s;
-    }
-    .stButton>button:hover {
-        border-color: #007bff;
-        color: #007bff;
-    }
-    .news-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 12px;
-        border-left: 5px solid #dee2e6;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        margin-bottom: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -42,7 +28,6 @@ def fetch_google_news(keyword):
         news_items = []
         for item in root.findall('.//item')[:10]:
             title = item.find('title').text
-            # ジャンル判定
             category = "🏗️ 建設・転落"
             if any(k in title for k in ["中毒", "溶剤", "化学", "ガス"]):
                 category = "🧪 化学・溶剤"
@@ -60,19 +45,29 @@ def fetch_google_news(keyword):
     except:
         return []
 
-# ヘッダー
+# タイトル
 st.title("🛡️ Safety News Tracker")
-st.caption("Fukuoka QC Division - 安全管理情報の自動収集・解析")
+st.caption("Fukuoka QC Division - 安全管理情報の自動収集")
 
-# メイン処理
+# ニュース取得
 with st.spinner('最新の安全情報をロード中...'):
     results = fetch_google_news("労働災害 建設 転落") + fetch_google_news("有機溶剤 中毒 化学")
     df = pd.DataFrame(results).drop_duplicates(subset=['タイトル']).reset_index(drop=True)
 
 if not df.empty:
-    # グリッドレイアウト
     cols = st.columns(2)
     for i, (_, r) in enumerate(df.iterrows()):
         with cols[i % 2]:
-            # カード風のコンテナ
+            # ここがエラーの起きた箇所です。インデント（段落）を正確に揃えています。
             with st.container(border=True):
+                st.caption(f"{r['カテゴリ']} | {r['日付']}")
+                st.markdown(f"#### {r['タイトル']}")
+                st.markdown(f"**出典:** {r['ソース']}")
+                st.link_button("記事を確認する", r['URL'], use_container_width=True)
+else:
+    st.info("現在、表示できる新しいニュースはありません。")
+
+st.divider()
+if st.button("最新の情報に同期する"):
+    st.cache_data.clear()
+    st.rerun()
