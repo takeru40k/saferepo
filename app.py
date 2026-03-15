@@ -6,82 +6,50 @@ import pandas as pd
 st.set_page_config(page_title="安全衛生NEWS", layout="wide")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
 
-@st.cache_data(ttl=3600)
-def fetch_all_news():
+def safe_get(url):
+    """エラーが起きても止まらない取得関数"""
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=15)
+        return res
+    except:
+        return None
+
+@st.cache_data(ttl=1800)
+def fetch_news():
     data = []
     
-    # 1. 職場のあんぜんサイト
-    try:
-        url1 = "https://anzeninfo.mhlw.go.jp/index.html"
-        res1 = requests.get(url1, headers=HEADERS, timeout=10)
-        res1.encoding = 'utf-8'
-        soup1 = BeautifulSoup(res1.text, 'html.parser')
-        news_list = soup1.find('dl', class_='news_list')
-        if news_list:
-            for dt, dd in zip(news_list.find_all('dt')[:5], news_list.find_all('dd')[:5]):
-                a = dd.find('a')
-                if a:
-                    link = a['href']
-                    full_url = "https://anzeninfo.mhlw.go.jp" + link if link.startswith('/') else link
-                    data.append({"日付": dt.text, "カテゴリ": "事例・行政", "タイトル": a.text, "URL": full_url, "ソース": "職場のあんぜんサイト"})
-    except: pass
+    # --- 1. 職場のあんぜんサイト ---
+    res = safe_get("https://anzeninfo.mhlw.go.jp/index.html")
+    if res:
+        res.encoding = 'utf-8'
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for dt, dd in zip(soup.select('dl.news_list dt')[:5], soup.select('dl.news_list dd')[:5]):
+            a = dd.find('a')
+            if a:
+                data.append({"日付": dt.text, "カテゴリ": "事例・行政", "タイトル": a.text, "URL": "https://anzeninfo.mhlw.go.jp" + a['href'], "ソース": "職場のあんぜんサイト"})
 
-    # 2. 安全衛生情報センター（事故速報）
-    try:
-        url2 = "https://www.jaish.gr.jp/anzen/new/shasin_list.html"
-        res2 = requests.get(url2, headers=HEADERS, timeout=10)
-        res2.encoding = 'shift_jis'
-        soup2 = BeautifulSoup(res2.text, 'html.parser')
-        for r in soup2.find_all('tr')[1:6]:
+    # --- 2. 安全衛生情報センター ---
+    res = safe_get("https://www.jaish.gr.jp/anzen/new/shasin_list.html")
+    if res:
+        res.encoding = 'shift_jis'
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for r in soup.find_all('tr')[1:6]:
             tds = r.find_all('td')
             if len(tds) >= 2:
-                a2 = tds[1].find('a')
-                if a2:
-                    l2 = "https://www.jaish.gr.jp/anzen/" + a2['href'].replace('../', '')
-                    data.append({"日付": "最新", "カテゴリ": "事故速報", "タイトル": a2.text, "URL": l2, "ソース": "安全衛生情報センター"})
-    except: pass
+                a = tds[1].find('a')
+                if a:
+                    data.append({"日付": "最新", "カテゴリ": "事故速報", "タイトル": a.text, "URL": "https://www.jaish.gr.jp/anzen/" + a['href'].replace('../',''), "ソース": "安全衛生情報センター"})
 
-    # 3. 労働新聞社（安全衛生カテゴリ）
-    try:
-        url3 = "https://www.rodo.co.jp/news/category/safety/"
-        res3 = requests.get(url3, headers=HEADERS, timeout=10)
-        soup3 = BeautifulSoup(res3.text, 'html.parser')
-        # 記事タイトル部分を抽出
-        articles = soup3.select('article.post-list-item')
-        for art in articles[:5]:
-            a3 = art.select_one('h2.post-title a')
-            date3 = art.select_one('time')
-            if a3:
-                data.append({
-                    "日付": date3.text if date3 else "不明", 
-                    "カテゴリ": "法令・送検", 
-                    "タイトル": a3.text, 
-                    "URL": a3['href'], 
-                    "ソース": "労働新聞社"
-                })
-    except: pass
+    # --- 3. 労働新聞社 ---
+    res = safe_get("https://www.rodo.co.jp/news/category/safety/")
+    if res:
+        soup = BeautifulSoup(res.text, 'html.parser')
+        for art in soup.select('h2.post-title a')[:5]:
+            data.append({"日付": "最近", "カテゴリ": "法令・送検", "タイトル": art.text, "URL": art['href'], "ソース": "労働新聞社"})
 
-    # 4. 建設通信新聞（安全カテゴリを想定）
-    try:
-        url4 = "https://www.kensetsunews.com/category/policy" # 行政・施策系
-        res4 = requests.get(url4, headers=HEADERS, timeout=10)
-        soup4 = BeautifulSoup(res4.text, 'html.parser')
-        for art in soup4.select('article')[:5]:
-            a4 = art.find('a')
-            h2 = art.find('h2')
-            if a4 and h2:
-                data.append({
-                    "日付": "最近", 
-                    "カテゴリ": "建築・施策", 
-                    "タイトル": h2.get_text(strip=True), 
-                    "URL": a4['href'] if a4['href'].startswith('http') else "https://www.kensetsunews.com" + a4['href'], 
-                    "ソース": "建設通信新聞"
-                })
-    except: pass
-    
     return pd.DataFrame(data)
 
 st.title("🛡️ 安全衛生ニュース収集")
@@ -91,23 +59,21 @@ if st.sidebar.button("最新の情報に更新"):
     st.rerun()
 
 with st.spinner('情報を取得しています...'):
-    df = fetch_all_news()
+    df = fetch_news()
 
 if not df.empty:
-    df = df.drop_duplicates(subset=['タイトル'])
-    src_list = df["ソース"].unique().tolist()
-    sources = st.sidebar.multiselect("フィルタ", src_list, default=src_list)
+    df = df.drop_duplicates(subset=['タイトル']).reset_index(drop=True)
+    sources = st.sidebar.multiselect("フィルタ", df["ソース"].unique(), default=df["ソース"].unique())
     disp = df[df["ソース"].isin(sources)]
 
     cols = st.columns(2)
     for i, (_, r) in enumerate(disp.iterrows()):
         with cols[i % 2]:
             with st.container(border=True):
-                # 出典ごとにラベルの色を変える簡易演出
-                label_color = "🔴" if "事故" in r['カテゴリ'] else "🔵"
-                st.caption(f"{label_color} {r['日付']} | {r['カテゴリ']}")
+                icon = "🔴" if "事故" in r['カテゴリ'] else "🔵"
+                st.caption(f"{icon} {r['日付']} | {r['カテゴリ']}")
                 st.markdown(f"**{r['タイトル']}**")
                 st.write(f"出典: {r['ソース']}")
                 st.link_button("記事を見る", r['URL'])
 else:
-    st.info("ニュースが見つかりませんでした。")
+    st.info("ニュースを取得できませんでした。サイドバーの「更新」ボタンを何度か押してみてください。")
